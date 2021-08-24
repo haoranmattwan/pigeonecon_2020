@@ -1,0 +1,610 @@
+---
+title: "exp1_tpfr"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(rstan)
+library(rethinking)
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(tidyverse)
+library(knitr)
+library(tinytex)
+library(ggpubr)
+
+options(mc.cores = parallel::detectCores())
+rstan_options(auto_write = TRUE)
+Behav <- read.csv("data/raw_data_R_v12.csv")
+Behav$subj <- as.integer(as.factor(Behav$subj))
+rstan_options(auto_write = TRUE);
+options(mc.cores = parallel::detectCores());
+parallel:::setDefaultClusterOptions(setup_strategy = "sequential")
+```
+
+```{r create variable, include=FALSE, cache = TRUE}
+# Create variable
+Behav$trial <- floor(Behav$exchprodresp/Behav$exchprodfr)                           # the number of trials
+Behav$sav <- (Behav$rft)/Behav$trial                                                # the average tokens accumulated per trial
+Behav$sav_rate <- Behav$sav/60                                                      # Saving rate (token exchanges per trial / 60)
+Behav$tot_res <- Behav$tokprodresp + Behav$exchprodresp + Behav$tokexchresp         # total number of responses 
+
+# Transform the saving rate from [0,1] to (0,1)
+Behav$sav_rate <- (Behav$sav_rate * (length(Behav$sav_rate) - 1) + 0.5)/length(Behav$sav_rate)
+
+# Create dataset for each experiment
+behav_exp1 <- subset(Behav, Behav$exp1 == 1)
+behav_exp2 <- subset(Behav, Behav$exp2 == 2)
+behav_exp3 <- subset(Behav, Behav$exp3 == 3)
+behav_exp4 <- subset(Behav, Behav$exp4 == 4)
+behav_exp5 <- subset(Behav, Behav$exp5 == 5)
+```
+
+```{r exp1 create new variable, include=FALSE, cache = TRUE}
+# Summary of independent variables in each condition
+tokprodfr_summ <- behav_exp1 %>%
+  group_by(subj, tokprodfr, exchprodfr, price, exp1cond) %>%
+  count()
+tokprodfr_summ
+
+# Create relative unit price
+behav_exp1$range1 <- (behav_exp1$rft * behav_exp1$exchprodfr + behav_exp1$rft * (behav_exp1$tokprodfr*behav_exp1$price + behav_exp1$price)) - ((ceiling(behav_exp1$tokexchresp/60) * behav_exp1$exchprodfr) + behav_exp1$rft * (behav_exp1$tokprodfr*behav_exp1$price + behav_exp1$price))
+behav_exp1$range2 <- (behav_exp1$rft * behav_exp1$exchprodfr + behav_exp1$rft * (behav_exp1$tokprodfr*behav_exp1$price + behav_exp1$price)) - (behav_exp1$tokprodresp + behav_exp1$tokexchresp + behav_exp1$exchprodresp)
+behav_exp1$ration_i <- (behav_exp1$range2)/(behav_exp1$range1)
+
+# Transform the relative unit price from [0,1] to (0,1)
+behav_exp1$index <- is.na(behav_exp1$ration_i)
+behav_exp1$ration_i[behav_exp1$index] <- 0
+behav_exp1$ration_i <- (behav_exp1$ration_i * (length(behav_exp1$ration_i) - 1) + 0.5)/length(behav_exp1$ration_i)
+```
+
+```{r exp1 sav model, include=FALSE, cache = TRUE}
+# Build and feed the multilevel model
+cyc <- 4000
+pair_machine_mlm_sav <- stan_model(file="stan/exp_sav.stan")
+dex <- rep(TRUE,length(behav_exp1$subj))
+dat <- list(N = sum(dex), S = length(unique(behav_exp1$subj[dex])), subID = behav_exp1$subj[dex], C = length(unique(behav_exp1$exp1cond[dex])), condID = behav_exp1$exp1cond[dex], Sav = behav_exp1$sav_rate[dex])
+sav_output_exp1 <- sampling(pair_machine_mlm_sav, data=dat, iter=cyc*2, warmup=cyc, chains=4, cores=4, control=list(adapt_delta=0.99,max_treedepth=15))
+```
+
+```{r exp1 sav output, include=FALSE, cache = TRUE}
+q <- data.frame(extract.samples(sav_output_exp1))
+
+## How does the token production ratio affect token accumulation per trial? 
+# Model's coefficient outputs
+precis(sav_output_exp1,depth=3,pars=c("gamma","zeta"))
+
+# Transform resulting coefficients
+q$gamma.1 <- inv_logit(q$gamma.1)
+q$gamma.2 <- inv_logit(q$gamma.2)
+q$gamma.3 <- inv_logit(q$gamma.3)
+q$zeta.1 <- inv_logit(q$zeta.1)
+q$zeta.2 <- inv_logit(q$zeta.2)
+q$zeta.3 <- inv_logit(q$zeta.3)
+q$zeta.4 <- inv_logit(q$zeta.4)
+q$zeta.5 <- inv_logit(q$zeta.5)
+q$zeta.6 <- inv_logit(q$zeta.6)
+q$zeta.7 <- inv_logit(q$zeta.7)
+q$zeta.8 <- inv_logit(q$zeta.8)
+q$zeta.9 <- inv_logit(q$zeta.9)
+q$zeta.10 <- inv_logit(q$zeta.10)
+q$zeta.11 <- inv_logit(q$zeta.11)
+q$zeta.12 <- inv_logit(q$zeta.12)
+q$zeta.13 <- inv_logit(q$zeta.13)
+q$zeta.14 <- inv_logit(q$zeta.14)
+q$zeta.15 <- inv_logit(q$zeta.15)
+q$zeta.16 <- inv_logit(q$zeta.16)
+q$zeta.17 <- inv_logit(q$zeta.17)
+q$zeta.18 <- inv_logit(q$zeta.18)
+precis(q,depth=3, digits = 4, pars=c("gamma","zeta"))
+
+# Plot: across subjects
+plotdata <- data.frame(
+  Condition = c( rep("1",16000), rep("5",16000), rep("10",16000)),
+  Intercept = c( q$gamma.1, q$gamma.2, q$gamma.3)
+) %>%
+  mutate(Condition = fct_relevel(Condition, "1", "5", "10"))
+
+data_summary <- function(x) {
+   m <- mean(x)
+   ymin <- m-sd(x)
+   ymax <- m+sd(x)
+   return(c(y=m,ymin=ymin,ymax=ymax))
+}
+
+p1 <- ggplot(plotdata, aes(Condition, Intercept)) +
+  geom_violin() +
+  stat_summary(fun.data=data_summary, geom = "line",linetype="dashed", aes(group=1)) + 
+  stat_summary(fun.data=data_summary) +
+  theme(panel.background = element_rect(fill = "white", color = "black", size = 0.8)) +
+  ggtitle("Group Level") +
+  labs(x = NULL, y = NULL) +
+  theme(axis.text=element_text(size = 12),
+        plot.title=element_text(family="Times", size= 12,face="bold"))
+
+# Plot: subject 126 
+plotdata <- data.frame(
+  Condition = c( rep("1",16000), rep("5",16000), rep("10",16000)),
+  Intercept = c( q$zeta.1, q$zeta.7, q$zeta.13 )
+) %>%
+  mutate(Condition = fct_relevel(Condition, "1", "5", "10"))
+
+p2 <- ggplot(plotdata, aes(Condition, Intercept)) +
+  geom_violin() +
+  stat_summary(fun.data=data_summary, geom = "line",linetype="dashed", aes(group=1)) + 
+  stat_summary(fun.data=data_summary) +
+  theme(panel.background = element_rect(fill = "white", color = "black", size = 0.8)) +
+  ggtitle("Pigeon 126") +
+  labs(x = NULL, y = NULL) +
+  theme(axis.text=element_text(size = 12),
+        plot.title=element_text(family="Times", size= 12,face="bold"))
+
+# Plot: subject 136
+plotdata <- data.frame(
+  Condition = c( rep("1",16000), rep("5",16000), rep("10",16000)),
+  Intercept = c( q$zeta.2, q$zeta.8, q$zeta.14 )
+) %>%
+  mutate(Condition = fct_relevel(Condition, "1", "5", "10"))
+
+p3 <- ggplot(plotdata, aes(Condition, Intercept)) +
+  geom_violin() +
+  stat_summary(fun.data=data_summary, geom = "line",linetype="dashed", aes(group=1)) + 
+  stat_summary(fun.data=data_summary) +
+  theme(panel.background = element_rect(fill = "white", color = "black", size = 0.8)) +
+  ggtitle("Pigeon 136") +
+  labs(x = NULL, y = NULL) +
+  theme(axis.text=element_text(size = 12),
+        plot.title=element_text(family="Times", size= 12,face="bold"))
+
+# Plot: subject 764
+plotdata <- data.frame(
+  Condition = c( rep("1",16000), rep("5",16000), rep("10",16000)),
+  Intercept = c( q$zeta.3, q$zeta.9, q$zeta.15 )
+) %>%
+  mutate(Condition = fct_relevel(Condition, "1", "5", "10"))
+
+p4 <- ggplot(plotdata, aes(Condition, Intercept)) +
+  geom_violin() +
+  stat_summary(fun.data=data_summary, geom = "line",linetype="dashed", aes(group=1)) + 
+  stat_summary(fun.data=data_summary) +
+  theme(panel.background = element_rect(fill = "white", color = "black", size = 0.8)) +
+  ggtitle("Pigeon 764") +
+  labs(x = NULL, y = NULL) +
+  theme(axis.text=element_text(size = 12),
+        plot.title=element_text(family="Times", size= 12,face="bold"))
+
+# Plot: subject 1750
+plotdata <- data.frame(
+  Condition = c( rep("1",16000), rep("5",16000), rep("10",16000)),
+  Intercept = c( q$zeta.4, q$zeta.10, q$zeta.16 )
+) %>%
+  mutate(Condition = fct_relevel(Condition, "1", "5", "10"))
+
+p5 <- ggplot(plotdata, aes(Condition, Intercept)) +
+  geom_violin() +
+  stat_summary(fun.data=data_summary, geom = "line",linetype="dashed", aes(group=1)) + 
+  stat_summary(fun.data=data_summary) +
+  theme(panel.background = element_rect(fill = "white", color = "black", size = 0.8)) +
+  ggtitle("Pigeon 1750") +
+  labs(x = NULL, y = NULL) +
+  theme(axis.text=element_text(size = 12),
+        plot.title=element_text(family="Times", size= 12,face="bold"))
+
+# Plot: subject 1770
+plotdata <- data.frame(
+  Condition = c( rep("1",16000), rep("5",16000), rep("10",16000)),
+  Intercept = c( q$zeta.5, q$zeta.11, q$zeta.17 )
+) %>%
+  mutate(Condition = fct_relevel(Condition, "1", "5", "10"))
+
+p6 <- ggplot(plotdata, aes(Condition, Intercept)) +
+  geom_violin() +
+  stat_summary(fun.data=data_summary, geom = "line",linetype="dashed", aes(group=1)) + 
+  stat_summary(fun.data=data_summary) +
+  theme(panel.background = element_rect(fill = "white", color = "black", size = 0.8)) +
+  ggtitle("Pigeon 1770") +
+  labs(x = NULL, y = NULL) +
+  theme(axis.text=element_text(size = 12),
+        plot.title=element_text(family="Times", size= 12,face="bold"))
+
+# Plot: subject 1851
+plotdata <- data.frame(
+  Condition = c( rep("1",16000), rep("5",16000), rep("10",16000)),
+  Intercept = c( q$zeta.6, q$zeta.12, q$zeta.18 )
+) %>%
+  mutate(Condition = fct_relevel(Condition, "1", "5", "10"))
+
+p7 <- ggplot(plotdata, aes(Condition, Intercept)) +
+  geom_violin() +
+  stat_summary(fun.data=data_summary, geom = "line",linetype="dashed", aes(group=1)) + 
+  stat_summary(fun.data=data_summary) +
+  theme(panel.background = element_rect(fill = "white", color = "black", size = 0.8)) +
+  ggtitle("Pigeon 1851") +
+  labs(x = NULL, y = NULL) +
+  theme(axis.text=element_text(size = 12),
+        plot.title=element_text(family="Times", size= 12,face="bold"))
+
+# Combine all figures
+all_p_exp1sav <- ggarrange(p1, 
+          ggarrange(p2, p3, p4, p5, p6, p7, ncol = 3, nrow = 2),
+          nrow = 2
+)
+all_p_exp1sav <- annotate_figure(all_p_exp1sav,
+                bottom = text_grob("Token Production FR", family="Times", face = "bold", size = 16),
+                left = text_grob("Token Accumulation", family="Times", face = "bold", size = 16, rot=90),
+                top = text_grob("Figure 2", family="Times", face = "italic", size = 18)
+)
+
+# Save the output plot
+ggplot2::ggsave(
+  "all_p_exp1sav.pdf",
+  plot = all_p_exp1sav,
+  path = "fig"
+)
+```
+
+```{r exp1 cons model, include=FALSE, cache = TRUE}
+# Build and feed the multilevel model
+pair_machine_mlm <- stan_model(file="stan/exp.stan")
+dex <- rep(TRUE,length(behav_exp1$subj))
+dat <- list(N = sum(dex), S = length(unique(behav_exp1$subj[dex])), subID = behav_exp1$subj[dex], C = length(unique(behav_exp1$exp1cond[dex])), condID = behav_exp1$exp1cond[dex], FC=behav_exp1$rft[dex])
+output_exp1 <- sampling(pair_machine_mlm, data=dat, iter=cyc*2, warmup=cyc, chains=4, cores=4, control=list(adapt_delta=0.99,max_treedepth=15))
+```
+```{r exp1 cons l output, include=FALSE, cache = TRUE}
+# Model's coefficient output
+precis(output_exp1,depth=3, pars=c("gamma","beta"))
+q <- data.frame(extract.samples(output_exp1))
+
+# Transform the output
+  q$gamma.1 <- exp(q$gamma.1)
+  q$gamma.2 <- exp(q$gamma.2)
+  q$gamma.3 <- exp(q$gamma.3)
+  q$beta.1 <- exp(q$beta.1)
+  q$beta.2 <- exp(q$beta.2)
+  q$beta.3 <- exp(q$beta.3)
+  q$beta.4 <- exp(q$beta.4)
+  q$beta.5 <- exp(q$beta.5)
+  q$beta.6 <- exp(q$beta.6)
+  q$beta.7 <- exp(q$beta.7)
+  q$beta.8 <- exp(q$beta.8)
+  q$beta.9 <- exp(q$beta.9)
+  q$beta.10 <- exp(q$beta.10)
+  q$beta.11 <- exp(q$beta.11)
+  q$beta.12 <- exp(q$beta.12)
+  q$beta.13 <- exp(q$beta.13)
+  q$beta.14 <- exp(q$beta.14)
+  q$beta.15 <- exp(q$beta.15)
+  q$beta.16 <- exp(q$beta.16)
+  q$beta.17 <- exp(q$beta.17)
+  q$beta.18 <- exp(q$beta.18)
+precis(q,depth=3, pars=c("gamma","beta"))
+
+# Plot: across subjects
+plotdata <- data.frame(
+  Condition = c( rep("1",16000), rep("5",16000), rep("10",16000)),
+  Intercept = c( q$gamma.1, q$gamma.2, q$gamma.3 )
+) %>%
+  mutate(Condition = fct_relevel(Condition, "1", "5", "10"))
+
+data_summary <- function(x) {
+   m <- mean(x)
+   ymin <- m-sd(x)
+   ymax <- m+sd(x)
+   return(c(y=m,ymin=ymin,ymax=ymax))
+}
+
+p1 <- ggplot(plotdata, aes(Condition, Intercept)) +
+  geom_violin() +
+  stat_summary(fun.data=data_summary, geom = "line",linetype="dashed", aes(group=1)) + 
+  stat_summary(fun.data=data_summary) +
+  theme(panel.background = element_rect(fill = "white", color = "black", size = 0.8)) +
+  ggtitle("Group Level") +
+  labs(x = NULL, y = NULL) +
+  theme(axis.text=element_text(size = 12),
+        plot.title=element_text(family="Times", size= 12,face="bold"))
+
+# Plot: subject 126 
+plotdata <- data.frame(
+  Condition = c( rep("1",16000), rep("5",16000), rep("10",16000)),
+  Intercept = c( q$beta.1, q$beta.7, q$beta.13 )
+) %>%
+  mutate(Condition = fct_relevel(Condition, "1", "5", "10"))
+
+p2 <- ggplot(plotdata, aes(Condition, Intercept)) +
+  geom_violin() +
+  stat_summary(fun.data=data_summary, geom = "line",linetype="dashed", aes(group=1)) + 
+  stat_summary(fun.data=data_summary) +
+  theme(panel.background = element_rect(fill = "white", color = "black", size = 0.8)) +
+  ggtitle("Pigeon 126") +
+  labs(x = NULL, y = NULL) +
+  theme(axis.text=element_text(size = 12),
+        plot.title=element_text(family="Times", size= 12,face="bold"))
+
+# Plot: subject 136
+plotdata <- data.frame(
+  Condition = c( rep("1",16000), rep("5",16000), rep("10",16000)),
+  Intercept = c( q$beta.2, q$beta.8, q$beta.14 )
+) %>%
+  mutate(Condition = fct_relevel(Condition, "1", "5", "10"))
+
+p3 <- ggplot(plotdata, aes(Condition, Intercept)) +
+  geom_violin() +
+  stat_summary(fun.data=data_summary, geom = "line",linetype="dashed", aes(group=1)) + 
+  stat_summary(fun.data=data_summary) +
+  theme(panel.background = element_rect(fill = "white", color = "black", size = 0.8)) +
+  ggtitle("Pigeon 136") +
+  labs(x = NULL, y = NULL) +
+  theme(axis.text=element_text(size = 12),
+        plot.title=element_text(family="Times", size= 12,face="bold"))
+
+# Plot: subject 764
+plotdata <- data.frame(
+  Condition = c( rep("1",16000), rep("5",16000), rep("10",16000)),
+  Intercept = c( q$beta.3, q$beta.9, q$beta.15 )
+) %>%
+  mutate(Condition = fct_relevel(Condition, "1", "5", "10"))
+
+p4 <- ggplot(plotdata, aes(Condition, Intercept)) +
+  geom_violin() +
+  stat_summary(fun.data=data_summary, geom = "line",linetype="dashed", aes(group=1)) + 
+  stat_summary(fun.data=data_summary) +
+  theme(panel.background = element_rect(fill = "white", color = "black", size = 0.8)) +
+  ggtitle("Pigeon 764") +
+  labs(x = NULL, y = NULL) +
+  theme(axis.text=element_text(size = 12),
+        plot.title=element_text(family="Times", size= 12,face="bold"))
+
+# Plot: subject 1750
+plotdata <- data.frame(
+  Condition = c( rep("1",16000), rep("5",16000), rep("10",16000)),
+  Intercept = c( q$beta.4, q$beta.10, q$beta.16 )
+) %>%
+  mutate(Condition = fct_relevel(Condition, "1", "5", "10"))
+
+p5 <- ggplot(plotdata, aes(Condition, Intercept)) +
+  geom_violin() +
+  stat_summary(fun.data=data_summary, geom = "line",linetype="dashed", aes(group=1)) + 
+  stat_summary(fun.data=data_summary) +
+  theme(panel.background = element_rect(fill = "white", color = "black", size = 0.8)) +
+  ggtitle("Pigeon 1750") +
+  labs(x = NULL, y = NULL) +
+  theme(axis.text=element_text(size = 12),
+        plot.title=element_text(family="Times", size= 12,face="bold"))
+
+# Plot: subject 1770
+plotdata <- data.frame(
+  Condition = c( rep("1",16000), rep("5",16000), rep("10",16000)),
+  Intercept = c( q$beta.5, q$beta.11, q$beta.17 )
+) %>%
+  mutate(Condition = fct_relevel(Condition, "1", "5", "10"))
+
+p6 <- ggplot(plotdata, aes(Condition, Intercept)) +
+  geom_violin() +
+  stat_summary(fun.data=data_summary, geom = "line",linetype="dashed", aes(group=1)) + 
+  stat_summary(fun.data=data_summary) +
+  theme(panel.background = element_rect(fill = "white", color = "black", size = 0.8)) +
+  ggtitle("Pigeon 1770") +
+  labs(x = NULL, y = NULL) +
+  theme(axis.text=element_text(size = 12),
+        plot.title=element_text(family="Times", size= 12,face="bold"))
+
+# Plot: subject 1851
+plotdata <- data.frame(
+  Condition = c( rep("1",16000), rep("5",16000), rep("10",16000)),
+  Intercept = c( q$beta.6, q$beta.12, q$beta.18 )
+) %>%
+  mutate(Condition = fct_relevel(Condition, "1", "5", "10"))
+
+p7 <- ggplot(plotdata, aes(Condition, Intercept)) +
+  geom_violin() +
+  stat_summary(fun.data=data_summary, geom = "line",linetype="dashed", aes(group=1)) + 
+  stat_summary(fun.data=data_summary) +
+  theme(panel.background = element_rect(fill = "white", color = "black", size = 0.8)) +
+  ggtitle("Pigeon 1851") +
+  labs(x = NULL, y = NULL) +
+  theme(axis.text=element_text(size = 12),
+        plot.title=element_text(family="Times", size= 12,face="bold"))
+
+# Combine all figures
+all_p_exp1 <- ggarrange(p1, 
+          ggarrange(p2, p3, p4, p5, p6, p7, ncol = 3, nrow = 2),
+          nrow = 2
+)
+all_p_exp1 <- annotate_figure(all_p_exp1,
+                bottom = text_grob("Token Production FR", family="Times", face = "bold", size = 16),
+                left = text_grob("Token Exchanges", family="Times", face = "bold", size = 16, rot=90),
+                top = text_grob("Figure 3", family="Times", face = "italic", size = 18)
+)
+
+# Save the output plot
+ggplot2::ggsave(
+  "all_p_exp1.pdf",
+  plot = all_p_exp1,
+  path = "fig"
+)
+```
+
+```{r exp1 rat model, include=FALSE, cache = TRUE}
+# Build and feed the multilevel model
+pair_machine_mlm_rat <- stan_model(file="stan/exp_rat.stan")
+dex <- rep(TRUE,length(behav_exp1$subj))
+dat <- list(N = sum(dex), S = length(unique(behav_exp1$subj[dex])), subID = behav_exp1$subj[dex], C = length(unique(behav_exp1$exp1cond[dex])), condID = behav_exp1$exp1cond[dex], Rat = behav_exp1$ration_i[dex])
+rat_output_exp1 <- sampling(pair_machine_mlm_rat, data=dat, iter=cyc*2, warmup=cyc, chains=4, cores=4, control=list(adapt_delta=0.99, max_treedepth=15))
+```
+```{r exp1 rat output, include=FALSE, cache = TRUE}
+q <- data.frame(extract.samples(rat_output_exp1))
+
+# Model's coefficient outputs
+precis(rat_output_exp1,depth=3,pars=c("gamma","zeta"))
+
+# Transform resulting coefficients
+q$gamma.1 <- inv_logit(q$gamma.1)
+q$gamma.2 <- inv_logit(q$gamma.2)
+q$gamma.3 <- inv_logit(q$gamma.3)
+q$zeta.1 <- inv_logit(q$zeta.1)
+q$zeta.2 <- inv_logit(q$zeta.2)
+q$zeta.3 <- inv_logit(q$zeta.3)
+q$zeta.4 <- inv_logit(q$zeta.4)
+q$zeta.5 <- inv_logit(q$zeta.5)
+q$zeta.6 <- inv_logit(q$zeta.6)
+q$zeta.7 <- inv_logit(q$zeta.7)
+q$zeta.8 <- inv_logit(q$zeta.8)
+q$zeta.9 <- inv_logit(q$zeta.9)
+q$zeta.10 <- inv_logit(q$zeta.10)
+q$zeta.11 <- inv_logit(q$zeta.11)
+q$zeta.12 <- inv_logit(q$zeta.12)
+q$zeta.13 <- inv_logit(q$zeta.13)
+q$zeta.14 <- inv_logit(q$zeta.14)
+q$zeta.15 <- inv_logit(q$zeta.15)
+q$zeta.16 <- inv_logit(q$zeta.16)
+q$zeta.17 <- inv_logit(q$zeta.17)
+q$zeta.18 <- inv_logit(q$zeta.18)
+precis(q,depth=3, digits = 2, pars=c("gamma","zeta"))
+
+# Plot: across subjects
+plotdata <- data.frame(
+  Condition = c( rep("1",16000), rep("5",16000), rep("10",16000)),
+  Intercept = c( q$gamma.1, q$gamma.2, q$gamma.3)
+) %>%
+  mutate(Condition = fct_relevel(Condition, "1", "5", "10"))
+
+data_summary <- function(x) {
+   m <- mean(x)
+   ymin <- m-sd(x)
+   ymax <- m+sd(x)
+   return(c(y=m,ymin=ymin,ymax=ymax))
+}
+
+p1 <- ggplot(plotdata, aes(Condition, Intercept)) +
+  geom_violin() +
+  stat_summary(fun.data=data_summary, geom = "line",linetype="dashed", aes(group=1)) + 
+  stat_summary(fun.data=data_summary) +
+  theme(panel.background = element_rect(fill = "white", color = "black", size = 0.8)) +
+  ggtitle("Group Level") +
+  labs(x = NULL, y = NULL) +
+  theme(axis.text=element_text(size = 12),
+        plot.title=element_text(family="Times", size= 12,face="bold"))
+
+# Plot: subject 126 
+plotdata <- data.frame(
+  Condition = c( rep("1",16000), rep("5",16000), rep("10",16000)),
+  Intercept = c( q$zeta.1, q$zeta.7, q$zeta.13 )
+) %>%
+  mutate(Condition = fct_relevel(Condition, "1", "5", "10"))
+
+p2 <- ggplot(plotdata, aes(Condition, Intercept)) +
+  geom_violin() +
+  stat_summary(fun.data=data_summary, geom = "line",linetype="dashed", aes(group=1)) + 
+  stat_summary(fun.data=data_summary) +
+  theme(panel.background = element_rect(fill = "white", color = "black", size = 0.8)) +
+  ggtitle("Pigeon 126") +
+  labs(x = NULL, y = NULL) +
+  theme(axis.text=element_text(size = 12),
+        plot.title=element_text(family="Times", size= 12,face="bold"))
+
+# Plot: subject 136
+plotdata <- data.frame(
+  Condition = c( rep("1",16000), rep("5",16000), rep("10",16000)),
+  Intercept = c( q$zeta.2, q$zeta.8, q$zeta.14 )
+) %>%
+  mutate(Condition = fct_relevel(Condition, "1", "5", "10"))
+
+p3 <- ggplot(plotdata, aes(Condition, Intercept)) +
+  geom_violin() +
+  stat_summary(fun.data=data_summary, geom = "line",linetype="dashed", aes(group=1)) + 
+  stat_summary(fun.data=data_summary) +
+  theme(panel.background = element_rect(fill = "white", color = "black", size = 0.8)) +
+  ggtitle("Pigeon 136") +
+  labs(x = NULL, y = NULL) +
+  theme(axis.text=element_text(size = 12),
+        plot.title=element_text(family="Times", size= 12,face="bold"))
+
+# Plot: subject 764
+plotdata <- data.frame(
+  Condition = c( rep("1",16000), rep("5",16000), rep("10",16000)),
+  Intercept = c( q$zeta.3, q$zeta.9, q$zeta.15 )
+) %>%
+  mutate(Condition = fct_relevel(Condition, "1", "5", "10"))
+
+p4 <- ggplot(plotdata, aes(Condition, Intercept)) +
+  geom_violin() +
+  stat_summary(fun.data=data_summary, geom = "line",linetype="dashed", aes(group=1)) + 
+  stat_summary(fun.data=data_summary) +
+  theme(panel.background = element_rect(fill = "white", color = "black", size = 0.8)) +
+  ggtitle("Pigeon 764") +
+  labs(x = NULL, y = NULL) +
+  theme(axis.text=element_text(size = 12),
+        plot.title=element_text(family="Times", size= 12,face="bold"))
+
+# Plot: subject 1750
+plotdata <- data.frame(
+  Condition = c( rep("1",16000), rep("5",16000), rep("10",16000)),
+  Intercept = c( q$zeta.4, q$zeta.10, q$zeta.16 )
+) %>%
+  mutate(Condition = fct_relevel(Condition, "1", "5", "10"))
+
+p5 <- ggplot(plotdata, aes(Condition, Intercept)) +
+  geom_violin() +
+  stat_summary(fun.data=data_summary, geom = "line",linetype="dashed", aes(group=1)) + 
+  stat_summary(fun.data=data_summary) +
+  theme(panel.background = element_rect(fill = "white", color = "black", size = 0.8)) +
+  ggtitle("Pigeon 1750") +
+  labs(x = NULL, y = NULL) +
+  theme(axis.text=element_text(size = 12),
+        plot.title=element_text(family="Times", size= 12,face="bold"))
+
+# Plot: subject 1770
+plotdata <- data.frame(
+  Condition = c( rep("1",16000), rep("5",16000), rep("10",16000)),
+  Intercept = c( q$zeta.5, q$zeta.11, q$zeta.17 )
+) %>%
+  mutate(Condition = fct_relevel(Condition, "1", "5", "10"))
+
+p6 <- ggplot(plotdata, aes(Condition, Intercept)) +
+  geom_violin() +
+  stat_summary(fun.data=data_summary, geom = "line",linetype="dashed", aes(group=1)) + 
+  stat_summary(fun.data=data_summary) +
+  theme(panel.background = element_rect(fill = "white", color = "black", size = 0.8)) +
+  ggtitle("Pigeon 1770") +
+  labs(x = NULL, y = NULL) +
+  theme(axis.text=element_text(size = 12),
+        plot.title=element_text(family="Times", size= 12,face="bold"))
+
+# Plot: subject 1851
+plotdata <- data.frame(
+  Condition = c( rep("1",16000), rep("5",16000), rep("10",16000)),
+  Intercept = c( q$zeta.6, q$zeta.12, q$zeta.18 )
+) %>%
+  mutate(Condition = fct_relevel(Condition, "1", "5", "10"))
+
+p7 <- ggplot(plotdata, aes(Condition, Intercept)) +
+  geom_violin() +
+  stat_summary(fun.data=data_summary, geom = "line",linetype="dashed", aes(group=1)) + 
+  stat_summary(fun.data=data_summary) +
+  theme(panel.background = element_rect(fill = "white", color = "black", size = 0.8)) +
+  ggtitle("Pigeon 1851") +
+  labs(x = NULL, y = NULL) +
+  theme(axis.text=element_text(size = 12),
+        plot.title=element_text(family="Times", size= 12,face="bold"))
+
+# Combine all figures
+all_p_exp1rat <- ggarrange(p1, 
+          ggarrange(p2, p3, p4, p5, p6, p7, ncol = 3, nrow = 2),
+          nrow = 2
+)
+all_p_exp1rat <- annotate_figure(all_p_exp1rat,
+                bottom = text_grob("Token Production FR", family="Times", face = "bold", size = 16),
+                left = text_grob("Relative Unit Price", family="Times", face = "bold", size = 16, rot=90),
+                top = text_grob("Figure 4", family="Times", face = "italic", size = 18)
+)
+
+# Save the output plot
+ggplot2::ggsave(
+  "all_p_exp1rat.pdf",
+  plot = all_p_exp1rat,
+  path = "fig"
+)
+```
